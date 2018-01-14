@@ -6,18 +6,11 @@ from sklearn.decomposition import NMF, LatentDirichletAllocation
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer, \
                                             HashingVectorizer, TfidfTransformer
 from sklearn.pipeline import make_pipeline
+from nltk.corpus import stopwords
 
-from tokenizer import StemTokenizer
 
-
-def topic_name(fnames, feats):
-    """
-    utility function for mapping a topic vector to a human-readable group of
-    words
-    """
-    total = sum(feats)
-    return  ', '.join('(%.2f) %s' % (feats[i] / total, fnames[i])
-                  for i in feats.argsort()[:-6:-1])
+# include contraction parts in stop words
+STOPWORDS = stopwords.stopwords('english') + ['don', 'haven', 've']
 
 
 class TopicModeler(object):
@@ -29,7 +22,7 @@ class TopicModeler(object):
     LDA = 'lda'         # Latent Dirichlet Allocation
 
     def __init__(self, vector_type=TFIDF, model_type=NMF, n_features=1000,
-                 n_topics=20):
+                 n_topics=20, max_df=0.6):
         """
         Holds state for text processing and topic modeling.
         Vector type choices: 'tfidf', 'tf', 'hash', 'hash-idf'
@@ -39,6 +32,23 @@ class TopicModeler(object):
         self.model_type = model_type
         self.n_features = n_features
         self.n_topics = n_topics
+        self.max_df = max_df
+
+    def _get_topic_names(self):
+        """ create human-readable names for each of the components (topics) """
+        # feat_names are the names of the tokens which comprise the topics
+        feat_names = self.vectorizer.get_feature_names()
+        self.topics = []
+        for comps in self.model.components_:
+            # rank the components of this topic by the proportion of the topic
+            # they represent
+            total = sum(comps)
+            comp_locs = (-comps).argsort()
+
+            # name the topic using the top 5 most significant component tokens
+            topic = ', '.join('(%.2f) %s' % (comps[i] / total, feat_names[i])
+                              for i in comp_locs[:5])
+            self.topics.append(topic)
 
     def vectorize(self, docs):
         """
@@ -51,16 +61,14 @@ class TopicModeler(object):
         # generate hashing vectors
         if self.vector_type == self.HASH_IDF:
             hasher = HashingVectorizer(n_features=self.n_features,
-                                       tokenizer=StemTokenizer(),
-                                       stop_words='english',
-                                       non_negative=True, norm=None,
-                                       binary=False)
+                                       stop_words=STOPWORDS,
+                                       non_negative=True,
+                                       norm=None, binary=False)
             self.vectorizer = make_pipeline(hasher, TfidfTransformer())
 
         elif self.vector_type == self.HASH:
             self.vectorizer = HashingVectorizer(n_features=self.n_features,
-                                                tokenizer=StemTokenizer(),
-                                                stop_words='english',
+                                                stop_words=STOPWORDS,
                                                 non_negative=False, norm='l2',
                                                 binary=False)
 
@@ -72,10 +80,9 @@ class TopicModeler(object):
             elif self.vector_type == self.TF:
                 Vectorizer = CountVectorizer
 
-            self.vectorizer = Vectorizer(max_df=0.8, min_df=2,
+            self.vectorizer = Vectorizer(max_df=self.max_df, min_df=2,
                                          max_features=self.n_features,
-                                         tokenizer=StemTokenizer(),
-                                         stop_words='english')
+                                         stop_words=STOPWORDS)
 
         return self.vectorizer.fit_transform(docs)
 
@@ -93,15 +100,9 @@ class TopicModeler(object):
         print 'fitting model of type', self.model_type, 'to', vectors.shape[0],\
             'with', self.n_topics, 'topics'
 
-        res = self.model.fit_transform(vectors)
-        self.baseline_topics = sum(res) / len(res)
+        self.model.fit(vectors)
 
-        word_names = self.vectorizer.get_feature_names()
-        self.topics = []
-        for group in self.model.components_:
-            topic = topic_name(word_names, group)
-            self.topics.append(topic)
-
+        self._get_topic_names()
         return self.topics
 
     def fit(self, docs):
@@ -123,22 +124,22 @@ class TopicModeler(object):
         self.fit(docs)
         return self.transform(docs)
 
+    def print_top_topics(self, docs):
+        """
+        Count the number of documents for which each topic is one of the top 3
+        factors, and print the most common topics.
+        """
+        df = self.transform(docs)
+        best_topics = [sorted(r.index, key=lambda i: r[i], reverse=True)[:3]
+                       for _, r in df.iterrows()]
+        topics = Counter(sum(best_topics, []))
+        print 'Top topics:'
+        for topic, n in sorted(topics.items(), key=lambda i: i[1], reverse=True):
+            print '%d:' % n, topic
 
-def print_top_topics(tm, df):
-    """
-    Count the number of documents for which each topic is one of the top 3
-    factors, and print the most common topics.
-    """
-    best_topics = [sorted(r.index, key=lambda i: r[i], reverse=True)[:3]
-                   for _, r in df.iterrows()]
-    topics = Counter(sum(best_topics, []))
-    print 'Top topics:'
-    for topic, n in sorted(topics.items(), key=lambda i: i[1], reverse=True):
-        print '%d:' % n, topic
-
-
-def print_topic_shares(tm, df):
-    topics = {t: sum(df[t]) for t in df.columns}
-    print 'Top topics:'
-    for topic, n in sorted(topics.items(), key=lambda i: i[1], reverse=True):
-        print '%.2f:' % n, topic
+    def print_topic_shares(self, docs):
+        df = self.transform(docs)
+        topics = {t: sum(df[t]) for t in df.columns}
+        print 'Top topics:'
+        for topic, n in sorted(topics.items(), key=lambda i: i[1], reverse=True):
+            print '%.2f:' % n, topic
