@@ -6,11 +6,10 @@ from sklearn.decomposition import NMF, LatentDirichletAllocation
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer, \
                                             HashingVectorizer, TfidfTransformer
 from sklearn.pipeline import make_pipeline
-from nltk.corpus import stopwords
-
+from sklearn.feature_extraction import stop_words
 
 # include contraction parts in stop words
-STOPWORDS = stopwords.stopwords('english') + ['don', 'haven', 've']
+STOPWORDS = list(stop_words.ENGLISH_STOP_WORDS) + ['don', 'haven', 've']
 
 
 class TopicModeler(object):
@@ -98,7 +97,7 @@ class TopicModeler(object):
                                                    random_state=0)
 
         print 'fitting model of type', self.model_type, 'to', vectors.shape[0],\
-            'with', self.n_topics, 'topics'
+            'documents with', self.n_topics, 'topics'
 
         self.model.fit(vectors)
 
@@ -124,22 +123,40 @@ class TopicModeler(object):
         self.fit(docs)
         return self.transform(docs)
 
-    def print_top_topics(self, docs):
+    def print_top_topics(self, docs, n_top=3):
         """
-        Count the number of documents for which each topic is one of the top 3
-        factors, and print the most common topics.
+        Count the number of documents for which each topic is one of the top
+        n_top factors, and print the most common topics.
         """
+        print 'transforming', len(docs), 'documents...'
         df = self.transform(docs)
-        best_topics = [sorted(r.index, key=lambda i: r[i], reverse=True)[:3]
-                       for _, r in df.iterrows()]
+        print 'done.'
+
+        print 'counting significant topics...'
+        best_topics = []
+        for _, r in df.iterrows():
+            # filter out all topics that are tied with the least significant one
+            significant_topics = [i for i in r.index if r[i] > min(r)]
+            best_n = sorted(significant_topics, key=lambda i: r[i],
+                            reverse=True)[:n_top]
+            best_topics.append(best_n)
+
         topics = Counter(sum(best_topics, []))
+        print 'done.'
+
         print 'Top topics:'
         for topic, n in sorted(topics.items(), key=lambda i: i[1], reverse=True):
             print '%d:' % n, topic
 
     def print_topic_shares(self, docs):
+        """
+        Rank the topics by how much each contributes to the corpus as a whole
+        """
+        print 'transforming', len(docs), 'documents...'
         df = self.transform(docs)
-        topics = {t: sum(df[t]) for t in df.columns}
+        print 'done.'
+
         print 'Top topics:'
+        topics = {t: sum(df[t]) for t in df.columns}
         for topic, n in sorted(topics.items(), key=lambda i: i[1], reverse=True):
             print '%.2f:' % n, topic
